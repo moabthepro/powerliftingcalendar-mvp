@@ -1,1 +1,38 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"powerliftingcalendar-mvp","appId":"1:584944356393:android:ed9ed176d4bb4c2b9ee038","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"powerliftingcalendar-mvp","configurations":{"android":"1:584944356393:android:ed9ed176d4bb4c2b9ee038","ios":"1:584944356393:ios:2794fdef1874ec649ee038","web":"1:584944356393:web:f5ea64d5fb5ac8019ee038","windows":"1:584944356393:web:bcf689a91ca8e4a49ee038"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "powerliftingcalendar-mvp",
+          "appId": "1:584944356393:android:ed9ed176d4bb4c2b9ee038",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "powerliftingcalendar-mvp",
+          "configurations": {
+            "android": "1:584944356393:android:ed9ed176d4bb4c2b9ee038",
+            "ios": "1:584944356393:ios:2794fdef1874ec649ee038",
+            "web": "1:584944356393:web:f5ea64d5fb5ac8019ee038",
+            "windows": "1:584944356393:web:bcf689a91ca8e4a49ee038"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

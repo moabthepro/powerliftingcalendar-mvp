@@ -1,0 +1,32 @@
+name: Twardy Deploy - Firebase Hosting
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobranie laminatu (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Instalacja zasilania (Flutter)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Pobielanie styków (Pobranie zależności)
+        run: flutter pub get
+
+      - name: Kompilacja wsadu Web
+        run: flutter build web
+
+      - name: Wgranie sterownika Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Przesłanie sygnału na serwery Google (Deploy)
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: firebase deploy --only hosting --token $FIREBASE_TOKEN
