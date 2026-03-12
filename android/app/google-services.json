@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "584944356393",
+    "project_id": "powerliftingcalendar-mvp",
+    "storage_bucket": "powerliftingcalendar-mvp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:584944356393:android:ed9ed176d4bb4c2b9ee038",
+        "android_client_info": {
+          "package_name": "com.mycompany.powerliftingmvp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "584944356393-9si9gp4h61lndam18iskl35e2nkrq59i.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mycompany.powerliftingmvp",
+            "certificate_hash": "9bbb3186b2189ef16d8f272bdab59362c395cbb4"
+          }
+        },
+        {
+          "client_id": "584944356393-3v9ea8r3427pajmv1d032f2hveq6h6gl.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDXXL3nQgdud3ZakKVAa0KP9gD0pTBlBFk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "584944356393-3v9ea8r3427pajmv1d032f2hveq6h6gl.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "584944356393-6r2p4fee1st5sd5biqqj81s08ic6mrkn.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.mycompany.powerliftingmvp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
