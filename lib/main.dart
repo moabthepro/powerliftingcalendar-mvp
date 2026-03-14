@@ -9,11 +9,11 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'firebase_options.dart';
 
 // ============================================================================
-// GLOBALNE ZWORKI I REJESTRY PAMIĘCI
+// GLOBALNE ZWORKI REAKTYWNE (STATE MANAGEMENT)
 // ============================================================================
-bool isModeratorGlobal = false; // Twardo wyłączony, zasila go tylko chmura
-final Set<String> favoritesGlobal = {};
-final Set<String> notificationsGlobal = {};
+bool isModeratorGlobal = false;
+final ValueNotifier<Set<String>> favoritesNotifier = ValueNotifier({});
+final ValueNotifier<Set<String>> notificationsNotifier = ValueNotifier({});
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,7 +37,98 @@ class PowerliftingApp extends StatelessWidget {
 }
 
 // ============================================================================
-// MODUŁ ZASILANIA: EKRAN LOGOWANIA
+// FUNKCJE POMOCNICZE I WSPÓŁDZIELONE ZASILANIE
+// ============================================================================
+Future<void> _launchSafeUrl(String? urlString) async {
+  if (urlString == null || urlString.isEmpty) return;
+  final url = Uri.parse(urlString);
+  if (await canLaunchUrl(url)) await launchUrl(url);
+}
+
+String formatDateRange(DateTime start, DateTime? end) {
+  final startStr =
+      "${start.day.toString().padLeft(2, '0')}.${start.month.toString().padLeft(2, '0')}.${start.year}";
+  if (end == null) return startStr;
+  final endStr =
+      "${end.day.toString().padLeft(2, '0')}.${end.month.toString().padLeft(2, '0')}.${end.year}";
+  if (startStr == endStr) return startStr;
+  return "$startStr - $endStr";
+}
+
+void toggleFavorite(BuildContext context, String docId) async {
+  final isFav = favoritesNotifier.value.contains(docId);
+  final newSet = Set<String>.from(favoritesNotifier.value);
+  if (isFav) {
+    newSet.remove(docId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Usunięto z ulubionych.'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  } else {
+    newSet.add(docId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Dodano do ulubionych!'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+  favoritesNotifier.value = newSet;
+
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null) {
+    final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+    if (isFav)
+      await docRef.set({
+        'favorites': FieldValue.arrayRemove([docId]),
+      }, SetOptions(merge: true));
+    else
+      await docRef.set({
+        'favorites': FieldValue.arrayUnion([docId]),
+      }, SetOptions(merge: true));
+  }
+}
+
+void toggleNotification(BuildContext context, String docId) async {
+  final isNotif = notificationsNotifier.value.contains(docId);
+  final newSet = Set<String>.from(notificationsNotifier.value);
+  if (isNotif) {
+    newSet.remove(docId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Powiadomienia wyłączone.'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  } else {
+    newSet.add(docId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Powiadomienia włączone!'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+  notificationsNotifier.value = newSet;
+
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null) {
+    final docRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+    if (isNotif)
+      await docRef.set({
+        'notifications': FieldValue.arrayRemove([docId]),
+      }, SetOptions(merge: true));
+    else
+      await docRef.set({
+        'notifications': FieldValue.arrayUnion([docId]),
+      }, SetOptions(merge: true));
+  }
+}
+
+// ============================================================================
+// MODUŁ ZASILANIA: EKRAN LOGOWANIA I REJESTRACJI
 // ============================================================================
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -124,7 +215,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             const SizedBox(height: 24),
-
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.redAccent,
@@ -140,7 +230,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ),
-
             if (_errorMessage.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 16),
@@ -153,18 +242,15 @@ class _LoginScreenState extends State<LoginScreen> {
                   textAlign: TextAlign.center,
                 ),
               ),
-
             const SizedBox(height: 32),
             const Divider(),
             const SizedBox(height: 16),
-
             const Text(
               "Nie masz jeszcze konta?",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 14),
             ),
             const SizedBox(height: 8),
-
             OutlinedButton(
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -186,9 +272,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-// ============================================================================
-// MODUŁ REJESTRACJI (WYSUWANY) Z ANALIZATOREM HASŁA
-// ============================================================================
 class RegisterSheet extends StatefulWidget {
   const RegisterSheet({super.key});
   @override
@@ -199,7 +282,6 @@ class _RegisterSheetState extends State<RegisterSheet> {
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
   final TextEditingController _repeatPassCtrl = TextEditingController();
-
   String _errorMessage = '';
   double _passwordStrength = 0.0;
   Color _strengthColor = Colors.redAccent;
@@ -359,7 +441,103 @@ class _RegisterSheetState extends State<RegisterSheet> {
 }
 
 // ============================================================================
-// GŁÓWNY UKŁAD I MENU (Z AUTOMATYCZNYM ADMINEM I SYNCEM ULUBIONYCH)
+// USTAWIENIA KONTA (ZMIANA HASŁA I EMAILA)
+// ============================================================================
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  final _emailCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+
+  void _updateEmail() async {
+    try {
+      await FirebaseAuth.instance.currentUser?.verifyBeforeUpdateEmail(
+        _emailCtrl.text.trim(),
+      );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Wysłano link! Kliknij go na nowym mailu, aby zatwierdzić zmianę.',
+            ),
+          ),
+        );
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Błąd: Zaloguj się ponownie przed zmianą lub sprawdź format e-maila.',
+            ),
+          ),
+        );
+    }
+  }
+
+  void _updatePassword() async {
+    try {
+      await FirebaseAuth.instance.currentUser?.updatePassword(
+        _passCtrl.text.trim(),
+      );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hasło zostało zaktualizowane.')),
+        );
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Błąd: Wymagane ponowne zalogowanie.')),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Ustawienia Konta')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(
+              controller: _emailCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Nowy adres e-mail',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: _updateEmail,
+              child: const Text("Zmień E-mail"),
+            ),
+            const SizedBox(height: 32),
+            TextField(
+              controller: _passCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Nowe hasło',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: _updatePassword,
+              child: const Text("Zmień Hasło"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// GŁÓWNY UKŁAD I MENU
 // ============================================================================
 class MainLayout extends StatefulWidget {
   const MainLayout({super.key});
@@ -376,10 +554,12 @@ class _MainLayoutState extends State<MainLayout> {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, authSnapshot) {
         final user = authSnapshot.data;
-
-        // Odcięcie przekaźnika admina przy wylogowaniu
         if (user == null) {
           isModeratorGlobal = false;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            favoritesNotifier.value = {};
+            notificationsNotifier.value = {};
+          });
         }
 
         return StreamBuilder<DocumentSnapshot>(
@@ -400,14 +580,17 @@ class _MainLayoutState extends State<MainLayout> {
               isAdmin = data?['isAdmin'] == true;
               userName = data?['name'] ?? "Zawodnik";
 
-              // Ciche zaciągnięcie Ulubionych z chmury do RAMu
-              if (data?['favorites'] != null) {
-                favoritesGlobal.clear();
-                favoritesGlobal.addAll(List<String>.from(data!['favorites']));
-              }
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (data?['favorites'] != null)
+                  favoritesNotifier.value = Set<String>.from(
+                    data!['favorites'],
+                  );
+                if (data?['notifications'] != null)
+                  notificationsNotifier.value = Set<String>.from(
+                    data!['notifications'],
+                  );
+              });
             }
-
-            // Twarde połączenie pinu
             isModeratorGlobal = isAdmin;
 
             return Scaffold(
@@ -418,68 +601,88 @@ class _MainLayoutState extends State<MainLayout> {
               drawer: Drawer(
                 child: Column(
                   children: [
-                    if (user != null)
-                      UserAccountsDrawerHeader(
-                        decoration: const BoxDecoration(
-                          color: Colors.redAccent,
-                        ),
-                        accountName: Text(
-                          userName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                        accountEmail: Text(user.email ?? "Brak maila"),
-                        currentAccountPicture: const CircleAvatar(
-                          backgroundColor: Colors.white,
-                          child: Icon(
-                            Icons.person,
-                            size: 40,
-                            color: Colors.redAccent,
-                          ),
-                        ),
-                        onDetailsPressed: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const ProfileScreen(),
-                            ),
-                          );
-                        },
-                      )
-                    else
-                      Container(
-                        color: Colors.grey.shade900,
-                        padding: EdgeInsets.only(
-                          top: MediaQuery.of(context).padding.top + 16,
-                          bottom: 16,
-                          left: 16,
-                          right: 16,
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            const CircleAvatar(
+                    Container(
+                      color: Colors.grey.shade900,
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.of(context).padding.top + 16,
+                        bottom: 16,
+                        left: 16,
+                        right: 16,
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          GestureDetector(
+                            onTap: user != null
+                                ? () {
+                                    Navigator.pop(context);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const ProfileScreen(),
+                                      ),
+                                    );
+                                  }
+                                : null,
+                            child: CircleAvatar(
                               radius: 24,
-                              backgroundColor: Colors.grey,
+                              backgroundColor: user != null
+                                  ? Colors.white
+                                  : Colors.grey,
                               child: Icon(
-                                Icons.person_outline,
+                                user != null
+                                    ? Icons.person
+                                    : Icons.person_outline,
                                 size: 28,
-                                color: Colors.white,
+                                color: user != null
+                                    ? Colors.redAccent
+                                    : Colors.white,
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            const Text(
-                              "Gość",
-                              style: TextStyle(
+                          ),
+                          const SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: user != null
+                                ? () {
+                                    Navigator.pop(context);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const ProfileScreen(),
+                                      ),
+                                    );
+                                  }
+                                : null,
+                            child: Text(
+                              user != null ? userName : "Gość",
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const Spacer(),
+                          ),
+                          const Spacer(),
+                          if (user != null)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.settings,
+                                color: Colors.grey,
+                              ),
+                              onPressed: () {
+                                Navigator.pop(context);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        const SettingsScreen(),
+                                  ),
+                                );
+                              },
+                            )
+                          else
                             ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.redAccent,
@@ -505,10 +708,9 @@ class _MainLayoutState extends State<MainLayout> {
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                        ],
                       ),
-
+                    ),
                     Expanded(
                       child: ListView(
                         padding: EdgeInsets.zero,
@@ -553,7 +755,6 @@ class _MainLayoutState extends State<MainLayout> {
                       ),
                     ),
                     const Divider(),
-
                     if (user != null)
                       ListTile(
                         leading: const Icon(
@@ -564,12 +765,7 @@ class _MainLayoutState extends State<MainLayout> {
                           'Wyloguj',
                           style: TextStyle(color: Colors.redAccent),
                         ),
-                        onTap: () {
-                          FirebaseAuth.instance.signOut();
-                          setState(
-                            () => favoritesGlobal.clear(),
-                          ); // Czyszczenie cache po wylogowaniu
-                        },
+                        onTap: () => FirebaseAuth.instance.signOut(),
                       ),
                     SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
                   ],
@@ -593,7 +789,7 @@ class _MainLayoutState extends State<MainLayout> {
 }
 
 // ============================================================================
-// EKRAN PROFILU ZAWODNIKA
+// EKRAN PROFILU ZAWODNIKA (TRYB ODCZYT / EDYCJA)
 // ============================================================================
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -602,6 +798,8 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  bool _isEditing = false;
+
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _ageCtrl = TextEditingController();
   final TextEditingController _heightCtrl = TextEditingController();
@@ -627,7 +825,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _loadProfile() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-
     final doc = await FirebaseFirestore.instance
         .collection('users')
         .doc(uid)
@@ -653,7 +850,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _saveProfile() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-
     await FirebaseFirestore.instance.collection('users').doc(uid).set({
       'name': _nameCtrl.text,
       'age': _ageCtrl.text,
@@ -667,10 +863,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       },
     }, SetOptions(merge: true));
 
+    setState(() => _isEditing = false);
     if (mounted)
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Profil zaktualizowany!')));
+      ).showSnackBar(const SnackBar(content: Text('Zapisano profil.')));
   }
 
   @override
@@ -679,163 +876,365 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(title: const Text("Twój Profil")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
+        child: _isEditing ? _buildEditMode() : _buildReadMode(),
+      ),
+    );
+  }
+
+  Widget _buildReadMode() {
+    return Column(
+      children: [
+        const CircleAvatar(
+          radius: 50,
+          backgroundColor: Colors.white24,
+          child: Icon(Icons.person, size: 60, color: Colors.redAccent),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          _nameCtrl.text.isEmpty ? "Zawodnik" : _nameCtrl.text,
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        Text(
+          _selectedFlag,
+          style: const TextStyle(fontSize: 16, color: Colors.grey),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            const CircleAvatar(
-              radius: 50,
-              backgroundColor: Colors.white24,
-              child: Icon(Icons.person, size: 60, color: Colors.redAccent),
+            _statBox("Wiek", _ageCtrl.text.isEmpty ? "-" : _ageCtrl.text),
+            _statBox(
+              "Wzrost",
+              _heightCtrl.text.isEmpty ? "-" : "${_heightCtrl.text} cm",
             ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _nameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Imię',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _ageCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Wiek',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
+            _statBox(
+              "Waga",
+              _weightCtrl.text.isEmpty ? "-" : "${_weightCtrl.text} kg",
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _heightCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Wzrost (cm)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _weightCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Waga (kg)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
+          ],
+        ),
+        const SizedBox(height: 32),
+        const Text(
+          "REKORDY ŻYCIOWE (PR)",
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.redAccent,
+          ),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.fitness_center),
+          title: const Text("Przysiad"),
+          trailing: Text(
+            "${_squatCtrl.text.isEmpty ? "0" : _squatCtrl.text} kg",
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.airline_seat_flat),
+          title: const Text("Wyciskanie"),
+          trailing: Text(
+            "${_benchCtrl.text.isEmpty ? "0" : _benchCtrl.text} kg",
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.vertical_align_top),
+          title: const Text("Martwy Ciąg"),
+          trailing: Text(
+            "${_deadliftCtrl.text.isEmpty ? "0" : _deadliftCtrl.text} kg",
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        const SizedBox(height: 32),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 50),
+            side: const BorderSide(color: Colors.redAccent),
+          ),
+          onPressed: () => setState(() => _isEditing = true),
+          icon: const Icon(Icons.edit, color: Colors.redAccent),
+          label: const Text(
+            'Zmień dane profilu',
+            style: TextStyle(
+              color: Colors.redAccent,
+              fontWeight: FontWeight.bold,
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: _selectedFlag,
-              decoration: const InputDecoration(
-                labelText: 'Reprezentacja',
-                border: OutlineInputBorder(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statBox(String label, String val) {
+    return Column(
+      children: [
+        Text(
+          val,
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    );
+  }
+
+  Widget _buildEditMode() {
+    return Column(
+      children: [
+        const CircleAvatar(
+          radius: 50,
+          backgroundColor: Colors.white24,
+          child: Icon(Icons.person, size: 60, color: Colors.redAccent),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Imię',
+                  border: OutlineInputBorder(),
+                ),
               ),
-              items: _flags
-                  .map((f) => DropdownMenuItem(value: f, child: Text(f)))
-                  .toList(),
-              onChanged: (val) => setState(() => _selectedFlag = val!),
             ),
-            const SizedBox(height: 32),
-            const Text(
-              "REKORDY ŻYCIOWE (PR)",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.redAccent,
-              ),
-            ),
-            const Divider(),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _squatCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Przysiad (kg)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.fitness_center),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _benchCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Wyciskanie (kg)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.airline_seat_flat),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _deadliftCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Martwy Ciąg (kg)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.vertical_align_top),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                minimumSize: const Size(double.infinity, 50),
-              ),
-              onPressed: _saveProfile,
-              child: const Text(
-                'ZAPISZ PROFIL DO CHMURY',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _ageCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Wiek',
+                  border: OutlineInputBorder(),
                 ),
               ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _heightCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Wzrost (cm)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _weightCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Waga (kg)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<String>(
+          value: _selectedFlag,
+          decoration: const InputDecoration(
+            labelText: 'Reprezentacja',
+            border: OutlineInputBorder(),
+          ),
+          items: _flags
+              .map((f) => DropdownMenuItem(value: f, child: Text(f)))
+              .toList(),
+          onChanged: (val) => setState(() => _selectedFlag = val!),
+        ),
+        const SizedBox(height: 32),
+        const Text(
+          "REKORDY ŻYCIOWE (PR)",
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Colors.redAccent,
+          ),
+        ),
+        const Divider(),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _squatCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Przysiad (kg)',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.fitness_center),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _benchCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Wyciskanie (kg)',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.airline_seat_flat),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _deadliftCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Martwy Ciąg (kg)',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.vertical_align_top),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 32),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.redAccent,
+            minimumSize: const Size(double.infinity, 50),
+          ),
+          onPressed: _saveProfile,
+          child: const Text(
+            'Zapisz',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        TextButton(
+          onPressed: () => setState(() => _isEditing = false),
+          child: const Text("Anuluj", style: TextStyle(color: Colors.grey)),
+        ),
+      ],
     );
   }
 }
 
 // ============================================================================
-// FUNKCJE POMOCNICZE
+// WSPÓŁDZIELONY GENERATOR KART ZAWODÓW (Z PARAMETREM HIGHLIGHT)
 // ============================================================================
-Future<void> _launchSafeUrl(String? urlString) async {
-  if (urlString == null || urlString.isEmpty) return;
-  final url = Uri.parse(urlString);
-  if (await canLaunchUrl(url)) await launchUrl(url);
+Widget buildEventCard(
+  BuildContext context,
+  Map<String, dynamic> data,
+  String docId, {
+  bool highlight = false,
+}) {
+  final date = (data['date'] as Timestamp).toDate();
+  final endDate = data['end_date'] != null
+      ? (data['end_date'] as Timestamp).toDate()
+      : null;
+  final dateStr = formatDateRange(date, endDate);
+
+  final bool isManuallyOpen = data['registration_open'] ?? true;
+  final DateTime? deadline = data['registration_deadline'] != null
+      ? (data['registration_deadline'] as Timestamp).toDate()
+      : null;
+
+  bool isRegistrationActive = isManuallyOpen;
+  DateTime checkDate = endDate ?? date;
+  if (checkDate.add(const Duration(days: 1)).isBefore(DateTime.now()))
+    isRegistrationActive = false;
+  if (deadline != null &&
+      DateTime.now().isAfter(deadline.add(const Duration(days: 1))))
+    isRegistrationActive = false;
+
+  final Color titleColor = isRegistrationActive
+      ? Colors.green
+      : Colors.redAccent;
+
+  return ValueListenableBuilder<Set<String>>(
+    valueListenable: favoritesNotifier,
+    builder: (context, favs, child) {
+      return ValueListenableBuilder<Set<String>>(
+        valueListenable: notificationsNotifier,
+        builder: (context, notifs, child) {
+          final bool isFav = favs.contains(docId);
+          final bool isNotif = notifs.contains(docId);
+
+          return Card(
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            shape: highlight
+                ? RoundedRectangleBorder(
+                    side: const BorderSide(color: Colors.amber, width: 2),
+                    borderRadius: BorderRadius.circular(12),
+                  )
+                : null,
+            child: ListTile(
+              contentPadding: const EdgeInsets.only(
+                left: 12,
+                right: 4,
+                top: 4,
+                bottom: 4,
+              ),
+              leading: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.circle,
+                    color: isRegistrationActive
+                        ? Colors.green
+                        : Colors.redAccent,
+                    size: 20,
+                  ),
+                ],
+              ),
+              title: Text(
+                data['title'] ?? 'Brak nazwy',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: titleColor,
+                ),
+              ),
+              subtitle: Text(
+                "${data['federation'] ?? 'Brak'} | ${data['location'] ?? 'Brak'} | $dateStr",
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      isFav ? Icons.star : Icons.star_border,
+                      color: isFav ? Colors.amber : Colors.grey,
+                    ),
+                    onPressed: () => toggleFavorite(context, docId),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      isNotif
+                          ? Icons.notifications_active
+                          : Icons.notifications_none,
+                      color: isNotif ? Colors.blueAccent : Colors.grey,
+                    ),
+                    onPressed: () => toggleNotification(context, docId),
+                  ),
+                ],
+              ),
+              onTap: () => showCompetitionDetailsDialog(context, data, docId),
+            ),
+          );
+        },
+      );
+    },
+  );
 }
 
 // ============================================================================
@@ -847,21 +1246,25 @@ void showCompetitionDetailsDialog(
   String docId,
 ) {
   final DateTime date = (data['date'] as Timestamp).toDate();
+  final DateTime? endDate = data['end_date'] != null
+      ? (data['end_date'] as Timestamp).toDate()
+      : null;
   final DateTime? deadline = data['registration_deadline'] != null
       ? (data['registration_deadline'] as Timestamp).toDate()
       : null;
   final List<dynamic> times = data['weighing_hours'] ?? [];
   final String fee = data['entry_fee']?.toString() ?? '0';
   final String currency = data['currency'] ?? 'PLN';
-  final String dateStr =
-      "${date.day.toString().padLeft(2, '0')}-${date.month.toString().padLeft(2, '0')}-${date.year}";
+  final String dateStr = formatDateRange(date, endDate);
   final String deadlineStr = deadline != null
       ? "${deadline.day.toString().padLeft(2, '0')}-${deadline.month.toString().padLeft(2, '0')}-${deadline.year}"
       : "Brak danych";
 
   final bool isManuallyOpen = data['registration_open'] ?? true;
   bool isRegistrationActive = isManuallyOpen;
-  if (date.isBefore(DateTime.now())) isRegistrationActive = false;
+  DateTime checkDate = endDate ?? date;
+  if (checkDate.add(const Duration(days: 1)).isBefore(DateTime.now()))
+    isRegistrationActive = false;
   if (deadline != null &&
       DateTime.now().isAfter(deadline.add(const Duration(days: 1))))
     isRegistrationActive = false;
@@ -878,9 +1281,107 @@ void showCompetitionDetailsDialog(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isModeratorGlobal)
+            if (data['description'] != null &&
+                data['description'].toString().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: Text(
+                  data['description'],
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            const Divider(),
+            _detailRow(Icons.calendar_today, "Termin: $dateStr"),
+            _detailRow(Icons.event_busy, "Zapisy do: $deadlineStr"),
+            _detailRow(
+              Icons.location_on,
+              "Lokalizacja: ${data['location'] ?? 'Brak danych'}",
+            ),
+            _detailRow(
+              Icons.emoji_events,
+              "Federacja: ${data['federation'] ?? 'Brak danych'}",
+            ),
+            _detailRow(
+              Icons.access_time,
+              "Godziny ważenia:\n${times.isNotEmpty ? times.join('\n') : 'Brak danych'}",
+            ),
+            _detailRow(Icons.payments, "Wpisowe: $fee $currency"),
+            const Divider(),
+            if ((data['info_url'] != null &&
+                    data['info_url'].toString().isNotEmpty) ||
+                (data['rules_url'] != null &&
+                    data['rules_url'].toString().isNotEmpty))
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  if (data['info_url'] != null &&
+                      data['info_url'].toString().isNotEmpty)
+                    Expanded(
+                      flex: 1,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _launchSafeUrl(data['info_url']),
+                        icon: const Icon(Icons.info_outline, size: 16),
+                        label: const Text(
+                          "INFO",
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueGrey,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                  if ((data['info_url'] != null &&
+                          data['info_url'].toString().isNotEmpty) &&
+                      (data['rules_url'] != null &&
+                          data['rules_url'].toString().isNotEmpty))
+                    const SizedBox(width: 8),
+                  if (data['rules_url'] != null &&
+                      data['rules_url'].toString().isNotEmpty)
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: () => _launchSafeUrl(data['rules_url']),
+                        icon: const Icon(Icons.gavel, size: 16),
+                        label: const Text(
+                          "REGULAMIN",
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            const SizedBox(height: 8),
+            if (data['registration_url'] != null &&
+                data['registration_url'].toString().isNotEmpty)
+              Center(
+                child: ElevatedButton.icon(
+                  onPressed: isRegistrationActive
+                      ? () => _launchSafeUrl(data['registration_url'])
+                      : null,
+                  icon: const Icon(Icons.how_to_reg),
+                  label: Text(
+                    isRegistrationActive ? "ZAPISZ SIĘ" : "ZAPISY ZAMKNIĘTE",
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    disabledBackgroundColor: Colors.grey.shade800,
+                    disabledForegroundColor: Colors.grey.shade500,
+                    minimumSize: const Size(double.infinity, 45),
+                  ),
+                ),
+              ),
+            if (isModeratorGlobal) ...[
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   TextButton.icon(
                     onPressed: () {
@@ -924,81 +1425,7 @@ void showCompetitionDetailsDialog(
                   ),
                 ],
               ),
-            const Divider(),
-            _detailRow(Icons.calendar_today, "Data: $dateStr"),
-            _detailRow(Icons.event_busy, "Zapisy do: $deadlineStr"),
-            _detailRow(
-              Icons.location_on,
-              "Lokalizacja: ${data['location'] ?? 'Brak danych'}",
-            ),
-            _detailRow(
-              Icons.emoji_events,
-              "Federacja: ${data['federation'] ?? 'Brak danych'}",
-            ),
-            _detailRow(
-              Icons.access_time,
-              "Godziny ważenia:\n${times.isNotEmpty ? times.join('\n') : 'Brak danych'}",
-            ),
-            _detailRow(Icons.payments, "Wpisowe: $fee $currency"),
-            const Divider(),
-            if ((data['info_url'] != null &&
-                    data['info_url'].toString().isNotEmpty) ||
-                (data['rules_url'] != null &&
-                    data['rules_url'].toString().isNotEmpty))
-              Row(
-                children: [
-                  if (data['info_url'] != null &&
-                      data['info_url'].toString().isNotEmpty)
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () => _launchSafeUrl(data['info_url']),
-                        icon: const Icon(Icons.info_outline, size: 18),
-                        label: const Text("INFO"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueGrey,
-                        ),
-                      ),
-                    ),
-                  if ((data['info_url'] != null &&
-                          data['info_url'].toString().isNotEmpty) &&
-                      (data['rules_url'] != null &&
-                          data['rules_url'].toString().isNotEmpty))
-                    const SizedBox(width: 8),
-                  if (data['rules_url'] != null &&
-                      data['rules_url'].toString().isNotEmpty)
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () => _launchSafeUrl(data['rules_url']),
-                        icon: const Icon(Icons.gavel, size: 18),
-                        label: const Text("REGULAMIN"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            const SizedBox(height: 8),
-            if (data['registration_url'] != null &&
-                data['registration_url'].toString().isNotEmpty)
-              Center(
-                child: ElevatedButton.icon(
-                  onPressed: isRegistrationActive
-                      ? () => _launchSafeUrl(data['registration_url'])
-                      : null,
-                  icon: const Icon(Icons.how_to_reg),
-                  label: Text(
-                    isRegistrationActive ? "ZAPISZ SIĘ" : "ZAPISY ZAMKNIĘTE",
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    disabledBackgroundColor: Colors.grey.shade800,
-                    disabledForegroundColor: Colors.grey.shade500,
-                    minimumSize: const Size(double.infinity, 45),
-                  ),
-                ),
-              ),
+            ],
           ],
         ),
       ),
@@ -1074,10 +1501,12 @@ class CompetitionFormSheet extends StatefulWidget {
 
 class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
   late DateTime _eventDate;
+  DateTime? _endDate;
   DateTime? _deadlineDate;
   bool _isRegistrationOpen = true;
 
   final TextEditingController _titleCtrl = TextEditingController();
+  final TextEditingController _descCtrl = TextEditingController();
   final TextEditingController _locationCtrl = TextEditingController();
   final TextEditingController _federationCtrl = TextEditingController();
   final TextEditingController _feeCtrl = TextEditingController();
@@ -1097,11 +1526,15 @@ class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
     if (widget.existingData != null) {
       final data = widget.existingData!;
       _eventDate = (data['date'] as Timestamp).toDate();
+      _endDate = data['end_date'] != null
+          ? (data['end_date'] as Timestamp).toDate()
+          : null;
       _deadlineDate = data['registration_deadline'] != null
           ? (data['registration_deadline'] as Timestamp).toDate()
           : null;
       _isRegistrationOpen = data['registration_open'] ?? true;
       _titleCtrl.text = data['title'] ?? '';
+      _descCtrl.text = data['description'] ?? '';
       _locationCtrl.text = data['location'] ?? '';
       _federationCtrl.text = data['federation'] ?? '';
       _feeCtrl.text = data['entry_fee']?.toString() ?? '';
@@ -1123,17 +1556,6 @@ class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
     }
   }
 
-  Future<void> _pickDeadline() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _deadlineDate ?? _eventDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      helpText: "Wybierz datę końca zapisów",
-    );
-    if (picked != null) setState(() => _deadlineDate = picked);
-  }
-
   void _saveData() async {
     if (_titleCtrl.text.isEmpty) return;
     List<String> timesFormatted = _weighingTimes
@@ -1144,9 +1566,11 @@ class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
         .toList();
     Map<String, dynamic> payload = {
       'title': _titleCtrl.text,
+      'description': _descCtrl.text,
       'location': _locationCtrl.text,
       'federation': _federationCtrl.text,
       'date': Timestamp.fromDate(_eventDate),
+      'end_date': _endDate != null ? Timestamp.fromDate(_endDate!) : null,
       'registration_deadline': _deadlineDate != null
           ? Timestamp.fromDate(_deadlineDate!)
           : null,
@@ -1192,10 +1616,65 @@ class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            Text(
-              'Data zawodów: ${_eventDate.day}-${_eventDate.month}-${_eventDate.year}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            const Text(
+              'Termin zawodów:',
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final DateTime? picked = await showDatePicker(
+                        context: context,
+                        initialDate: _eventDate,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2030),
+                        helpText: "Data rozpoczęcia",
+                      );
+                      if (picked != null) setState(() => _eventDate = picked);
+                    },
+                    icon: const Icon(Icons.calendar_today, size: 16),
+                    label: Text(
+                      "Start: ${_eventDate.day}-${_eventDate.month}-${_eventDate.year}",
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final DateTime? picked = await showDatePicker(
+                        context: context,
+                        initialDate: _endDate ?? _eventDate,
+                        firstDate: _eventDate,
+                        lastDate: DateTime(2030),
+                        helpText: "Data zakończenia",
+                      );
+                      if (picked != null) setState(() => _endDate = picked);
+                    },
+                    icon: const Icon(Icons.event_busy, size: 16),
+                    label: Text(
+                      _endDate == null
+                          ? "Opcjonalnie: Koniec"
+                          : "Koniec: ${_endDate!.day}-${_endDate!.month}-${_endDate!.year}",
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (_endDate != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => setState(() => _endDate = null),
+                  child: const Text(
+                    "Zresetuj datę końca",
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             TextField(
               controller: _titleCtrl,
@@ -1205,8 +1684,26 @@ class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
               ),
             ),
             const SizedBox(height: 12),
+            TextField(
+              controller: _descCtrl,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Krótki opis zawodów',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
             OutlinedButton.icon(
-              onPressed: _pickDeadline,
+              onPressed: () async {
+                final DateTime? picked = await showDatePicker(
+                  context: context,
+                  initialDate: _deadlineDate ?? _eventDate,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2030),
+                  helpText: "Wybierz datę końca zapisów",
+                );
+                if (picked != null) setState(() => _deadlineDate = picked);
+              },
               icon: const Icon(Icons.event_busy),
               label: Text(
                 _deadlineDate == null
@@ -1381,7 +1878,7 @@ class _CompetitionFormSheetState extends State<CompetitionFormSheet> {
 }
 
 // ============================================================================
-// EKRAN 1: KALENDARZ (Z NOWYM STEROWANIEM ULUBIONYCH)
+// EKRAN 1: KALENDARZ (Z WYMUSZONYM PRZESKOKIEM FAZY)
 // ============================================================================
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
@@ -1393,44 +1890,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
 
-  // FUNKCJA ZASILANIA ULUBIONYCH: Chmura dla zalogowanych, Cache dla Gościa
-  void _toggleFavorite(String docId) async {
-    final user = FirebaseAuth.instance.currentUser;
-
-    // Optymistyczny UI (szybka reakcja interfejsu)
-    setState(() {
-      if (favoritesGlobal.contains(docId))
-        favoritesGlobal.remove(docId);
-      else
-        favoritesGlobal.add(docId);
-    });
-
-    // Jeżeli masz profil w bazie, przekaż prąd do chmury
-    if (user != null) {
-      final docRef = FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid);
-      if (favoritesGlobal.contains(docId)) {
-        await docRef.set({
-          'favorites': FieldValue.arrayUnion([docId]),
-        }, SetOptions(merge: true));
-      } else {
-        await docRef.set({
-          'favorites': FieldValue.arrayRemove([docId]),
-        }, SetOptions(merge: true));
-      }
-    }
-  }
-
-  void _toggleNotification(String docId) {
-    setState(() {
-      if (notificationsGlobal.contains(docId))
-        notificationsGlobal.remove(docId);
-      else
-        notificationsGlobal.add(docId);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
@@ -1439,10 +1898,22 @@ class _CalendarScreenState extends State<CalendarScreen> {
         Map<DateTime, List<QueryDocumentSnapshot>> events = {};
         if (snapshot.hasData) {
           for (var doc in snapshot.data!.docs) {
-            final date = (doc['date'] as Timestamp).toDate();
-            final key = DateTime.utc(date.year, date.month, date.day);
-            if (events[key] == null) events[key] = [];
-            events[key]!.add(doc);
+            final data = doc.data() as Map<String, dynamic>;
+            final date = (data['date'] as Timestamp).toDate();
+            final endDate = data['end_date'] != null
+                ? (data['end_date'] as Timestamp).toDate()
+                : date;
+            DateTime current = DateTime.utc(date.year, date.month, date.day);
+            final endUtc = DateTime.utc(
+              endDate.year,
+              endDate.month,
+              endDate.day,
+            );
+            while (!current.isAfter(endUtc)) {
+              if (events[current] == null) events[current] = [];
+              events[current]!.add(doc);
+              current = current.add(const Duration(days: 1));
+            }
           }
         }
         return Column(
@@ -1454,11 +1925,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
               lastDay: DateTime.utc(2030, 12, 31),
               focusedDay: _focusedDay,
               selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+              // Zmiana nasłuchu - zmuszamy _focusedDay do ustawienia się na kliknięty dzień
               onDaySelected: (selectedDay, focusedDay) {
-                setState(() {
-                  _selectedDay = selectedDay;
-                  _focusedDay = focusedDay;
-                });
+                if (!isSameDay(_selectedDay, selectedDay)) {
+                  setState(() {
+                    _selectedDay = selectedDay;
+                    _focusedDay = selectedDay;
+                  });
+                }
               },
               eventLoader: (day) =>
                   events[DateTime.utc(day.year, day.month, day.day)] ?? [],
@@ -1484,48 +1958,71 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 ),
               ),
               calendarBuilders: CalendarBuilders(
-                markerBuilder: (context, date, events) {
-                  if (events.isEmpty) return const SizedBox();
+                markerBuilder: (context, date, evs) {
+                  if (evs.isEmpty) return const SizedBox();
                   return Align(
                     alignment: Alignment.bottomCenter,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: events.map((doc) {
-                        final data =
-                            (doc as QueryDocumentSnapshot).data()
-                                as Map<String, dynamic>;
-                        final bool isManuallyOpen =
-                            data['registration_open'] ?? true;
-                        final DateTime evDate = (data['date'] as Timestamp)
-                            .toDate();
-                        final DateTime? deadline =
-                            data['registration_deadline'] != null
-                            ? (data['registration_deadline'] as Timestamp)
-                                  .toDate()
-                            : null;
-                        bool isRegistrationActive = isManuallyOpen;
-                        if (evDate.isBefore(DateTime.now()))
-                          isRegistrationActive = false;
-                        if (deadline != null &&
-                            DateTime.now().isAfter(
-                              deadline.add(const Duration(days: 1)),
-                            ))
-                          isRegistrationActive = false;
-                        return Container(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 1.5,
-                            vertical: 6,
-                          ),
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isRegistrationActive
-                                ? Colors.green
-                                : Colors.redAccent,
-                          ),
+                    child: ValueListenableBuilder<Set<String>>(
+                      valueListenable: favoritesNotifier,
+                      builder: (context, favs, child) {
+                        bool hasFav = evs.any(
+                          (doc) =>
+                              favs.contains((doc as QueryDocumentSnapshot).id),
                         );
-                      }).toList(),
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (hasFav)
+                              const Icon(
+                                Icons.star,
+                                color: Colors.amber,
+                                size: 10,
+                              ),
+                            ...evs.take(hasFav ? 1 : 3).map((doc) {
+                              final data =
+                                  (doc as QueryDocumentSnapshot).data()
+                                      as Map<String, dynamic>;
+                              final bool isManuallyOpen =
+                                  data['registration_open'] ?? true;
+                              final DateTime evDate =
+                                  (data['date'] as Timestamp).toDate();
+                              final DateTime? endDate = data['end_date'] != null
+                                  ? (data['end_date'] as Timestamp).toDate()
+                                  : null;
+                              final DateTime? deadline =
+                                  data['registration_deadline'] != null
+                                  ? (data['registration_deadline'] as Timestamp)
+                                        .toDate()
+                                  : null;
+                              bool isRegistrationActive = isManuallyOpen;
+                              DateTime checkDate = endDate ?? evDate;
+                              if (checkDate
+                                  .add(const Duration(days: 1))
+                                  .isBefore(DateTime.now()))
+                                isRegistrationActive = false;
+                              if (deadline != null &&
+                                  DateTime.now().isAfter(
+                                    deadline.add(const Duration(days: 1)),
+                                  ))
+                                isRegistrationActive = false;
+                              return Container(
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 1.5,
+                                  vertical: 6,
+                                ),
+                                width: 6,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isRegistrationActive
+                                      ? Colors.green
+                                      : Colors.redAccent,
+                                ),
+                              );
+                            }),
+                          ],
+                        );
+                      },
                     ),
                   );
                 },
@@ -1577,111 +2074,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
       itemBuilder: (context, index) {
         final doc = dayEvents[index];
         final data = doc.data() as Map<String, dynamic>;
-        final bool isManuallyOpen = data['registration_open'] ?? true;
-        final DateTime evDate = (data['date'] as Timestamp).toDate();
-        final DateTime? deadline = data['registration_deadline'] != null
-            ? (data['registration_deadline'] as Timestamp).toDate()
-            : null;
-        bool isRegistrationActive = isManuallyOpen;
-        if (evDate.isBefore(DateTime.now())) isRegistrationActive = false;
-        if (deadline != null &&
-            DateTime.now().isAfter(deadline.add(const Duration(days: 1))))
-          isRegistrationActive = false;
-
-        final Color titleColor = isRegistrationActive
-            ? Colors.green
-            : Colors.redAccent;
-        final bool isFav = favoritesGlobal.contains(doc.id);
-        final bool isNotif = notificationsGlobal.contains(doc.id);
-
-        return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: ListTile(
-            contentPadding: const EdgeInsets.only(
-              left: 16,
-              right: 4,
-              top: 4,
-              bottom: 4,
-            ),
-            title: Text(
-              data['title'] ?? 'Zawody',
-              style: TextStyle(fontWeight: FontWeight.bold, color: titleColor),
-            ),
-            subtitle: Text(
-              "Federacja: ${data['federation'] ?? 'Brak'} | Miejsce: ${data['location'] ?? 'Brak'}",
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(
-                    isFav ? Icons.star : Icons.star_border,
-                    color: isFav ? Colors.amber : Colors.grey,
-                  ),
-                  onPressed: () => _toggleFavorite(doc.id),
-                ),
-                IconButton(
-                  icon: Icon(
-                    isNotif
-                        ? Icons.notifications_active
-                        : Icons.notifications_none,
-                    color: isNotif ? Colors.blueAccent : Colors.grey,
-                  ),
-                  onPressed: () => _toggleNotification(doc.id),
-                ),
-              ],
-            ),
-            onTap: () => showCompetitionDetailsDialog(context, data, doc.id),
-          ),
-        );
+        return buildEventCard(context, data, doc.id);
       },
     );
   }
 }
 
 // ============================================================================
-// EKRAN 2: LISTA NADCHODZĄCYCH (Z NOWYM STEROWANIEM ULUBIONYCH)
+// EKRAN 2: LISTA NADCHODZĄCYCH (Z FILTREM I ZŁOTĄ RAMKĄ DLA "DZISIAJ")
 // ============================================================================
-class UpcomingEventsScreen extends StatefulWidget {
+class UpcomingEventsScreen extends StatelessWidget {
   const UpcomingEventsScreen({super.key});
-  @override
-  State<UpcomingEventsScreen> createState() => _UpcomingEventsScreenState();
-}
-
-class _UpcomingEventsScreenState extends State<UpcomingEventsScreen> {
-  // FUNKCJA ZASILANIA ULUBIONYCH: Chmura dla zalogowanych, Cache dla Gościa
-  void _toggleFavorite(String docId) async {
-    final user = FirebaseAuth.instance.currentUser;
-    setState(() {
-      if (favoritesGlobal.contains(docId))
-        favoritesGlobal.remove(docId);
-      else
-        favoritesGlobal.add(docId);
-    });
-    if (user != null) {
-      final docRef = FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid);
-      if (favoritesGlobal.contains(docId)) {
-        await docRef.set({
-          'favorites': FieldValue.arrayUnion([docId]),
-        }, SetOptions(merge: true));
-      } else {
-        await docRef.set({
-          'favorites': FieldValue.arrayRemove([docId]),
-        }, SetOptions(merge: true));
-      }
-    }
-  }
-
-  void _toggleNotification(String docId) {
-    setState(() {
-      if (notificationsGlobal.contains(docId))
-        notificationsGlobal.remove(docId);
-      else
-        notificationsGlobal.add(docId);
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1697,89 +2100,141 @@ class _UpcomingEventsScreenState extends State<UpcomingEventsScreen> {
             builder: (context, snapshot) {
               if (!snapshot.hasData)
                 return const Center(child: CircularProgressIndicator());
-              final docs = snapshot.data!.docs;
-              if (docs.isEmpty)
+
+              final now = DateTime.now();
+              final today = DateTime(now.year, now.month, now.day);
+
+              List<QueryDocumentSnapshot> todayEvents = [];
+              List<QueryDocumentSnapshot> upcomingEvents = [];
+
+              for (var doc in snapshot.data!.docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                final date = (data['date'] as Timestamp).toDate();
+                final endDate = data['end_date'] != null
+                    ? (data['end_date'] as Timestamp).toDate()
+                    : date;
+
+                final start = DateTime(date.year, date.month, date.day);
+                final end = DateTime(endDate.year, endDate.month, endDate.day);
+
+                // Filtr - ucinamy historyczne wpisy na sztywno
+                if (end.isBefore(today)) continue;
+
+                // Jeżeli zawody trwają dzisiaj (wypadają pomiędzy startem a końcem)
+                if (!start.isAfter(today) && !end.isBefore(today)) {
+                  todayEvents.add(doc);
+                } else {
+                  upcomingEvents.add(doc);
+                }
+              }
+
+              if (todayEvents.isEmpty && upcomingEvents.isEmpty) {
                 return const Center(child: Text('Brak zaplanowanych zawodów'));
+              }
 
-              return ListView.builder(
-                itemCount: docs.length,
-                itemBuilder: (context, index) {
-                  final doc = docs[index];
-                  final data = doc.data() as Map<String, dynamic>;
-                  final date = (data['date'] as Timestamp).toDate();
-                  final dateStr =
-                      "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
-
-                  final bool isManuallyOpen = data['registration_open'] ?? true;
-                  final DateTime? deadline =
-                      data['registration_deadline'] != null
-                      ? (data['registration_deadline'] as Timestamp).toDate()
-                      : null;
-
-                  bool isRegistrationActive = isManuallyOpen;
-                  if (date.isBefore(DateTime.now()))
-                    isRegistrationActive = false;
-                  if (deadline != null &&
-                      DateTime.now().isAfter(
-                        deadline.add(const Duration(days: 1)),
-                      ))
-                    isRegistrationActive = false;
-
-                  final Color statusColor = isRegistrationActive
-                      ? Colors.green
-                      : Colors.redAccent;
-                  final bool isFav = favoritesGlobal.contains(doc.id);
-                  final bool isNotif = notificationsGlobal.contains(doc.id);
-
-                  return Card(
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+              return ListView(
+                children: [
+                  if (todayEvents.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(
+                        top: 16.0,
+                        bottom: 8.0,
+                        left: 16.0,
+                      ),
+                      child: Text(
+                        "Dzisiejsze zawody",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber,
+                        ),
+                      ),
                     ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.only(
-                        left: 12,
-                        right: 4,
-                        top: 4,
-                        bottom: 4,
+                    ...todayEvents.map(
+                      (doc) => buildEventCard(
+                        context,
+                        doc.data() as Map<String, dynamic>,
+                        doc.id,
+                        highlight: true,
                       ),
-                      leading: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.circle, color: statusColor, size: 20),
-                        ],
-                      ),
-                      title: Text(
-                        data['title'] ?? 'Brak nazwy',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      subtitle: Text(
-                        "${data['federation'] ?? 'Brak'} | ${data['location'] ?? 'Brak'} | $dateStr",
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: Icon(
-                              isFav ? Icons.star : Icons.star_border,
-                              color: isFav ? Colors.amber : Colors.grey,
-                            ),
-                            onPressed: () => _toggleFavorite(doc.id),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              isNotif
-                                  ? Icons.notifications_active
-                                  : Icons.notifications_none,
-                              color: isNotif ? Colors.blueAccent : Colors.grey,
-                            ),
-                            onPressed: () => _toggleNotification(doc.id),
-                          ),
-                        ],
-                      ),
-                      onTap: () =>
-                          showCompetitionDetailsDialog(context, data, doc.id),
                     ),
+                    const Divider(height: 32),
+                  ],
+                  if (upcomingEvents.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(
+                        top: 8.0,
+                        bottom: 8.0,
+                        left: 16.0,
+                      ),
+                      child: Text(
+                        "Nadchodzące",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                    ...upcomingEvents.map(
+                      (doc) => buildEventCard(
+                        context,
+                        doc.data() as Map<String, dynamic>,
+                        doc.id,
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ============================================================================
+// EKRAN 3: ULUBIONESCREEN
+// ============================================================================
+class FavoritesScreen extends StatelessWidget {
+  const FavoritesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        buildLegend(context),
+        Expanded(
+          child: ValueListenableBuilder<Set<String>>(
+            valueListenable: favoritesNotifier,
+            builder: (context, favs, child) {
+              if (favs.isEmpty)
+                return const Center(
+                  child: Text("Brak dodanych zawodów do ulubionych."),
+                );
+              return StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('competitions')
+                    .orderBy('date')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData)
+                    return const Center(child: CircularProgressIndicator());
+                  final docs = snapshot.data!.docs
+                      .where((doc) => favs.contains(doc.id))
+                      .toList();
+                  if (docs.isEmpty)
+                    return const Center(
+                      child: Text('Zaznaczone zawody już nie istnieją.'),
+                    );
+                  return ListView.builder(
+                    itemCount: docs.length,
+                    itemBuilder: (context, index) {
+                      final doc = docs[index];
+                      final data = doc.data() as Map<String, dynamic>;
+                      return buildEventCard(context, data, doc.id);
+                    },
                   );
                 },
               );
@@ -1792,21 +2247,8 @@ class _UpcomingEventsScreenState extends State<UpcomingEventsScreen> {
 }
 
 // ============================================================================
-// ZAŚLEPKI DLA ULUBIONYCH I RANKINGU
+// ZAŚLEPKA RANKINGU
 // ============================================================================
-class FavoritesScreen extends StatelessWidget {
-  const FavoritesScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        "Tu wylądują Ulubione Zawody",
-        style: TextStyle(fontSize: 18),
-      ),
-    );
-  }
-}
-
 class RankingScreen extends StatelessWidget {
   const RankingScreen({super.key});
   @override
