@@ -318,13 +318,41 @@ class _RegisterSheetState extends State<RegisterSheet> {
     }
 
     try {
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: _emailCtrl.text.trim(),
-        password: _passCtrl.text.trim(),
-      );
+      // 1. Zamknięcie obwodu w Firebase Auth
+      UserCredential userCredential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(
+            email: _emailCtrl.text.trim(),
+            password: _passCtrl.text.trim(),
+          );
+
+      User? user = userCredential.user;
+
+      if (user != null) {
+        // 2. Wysłanie impulsu weryfikacyjnego na e-mail
+        await user.sendEmailVerification();
+
+        // 3. Twardy wtrysk szkieletu danych do Firestore
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'email': user.email,
+          'name': 'Zawodnik',
+          'isAdmin': false,
+          'createdAt': FieldValue.serverTimestamp(),
+          'favorites': [],
+          'notifications': [],
+        });
+      }
+
       if (mounted) {
-        Navigator.pop(context);
-        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Konto utworzone! Sprawdź e-mail i kliknij link weryfikacyjny.',
+            ),
+            duration: Duration(seconds: 4),
+          ),
+        );
+        Navigator.pop(context); // Odpięcie arkusza rejestracji
+        Navigator.pop(context); // Zamknięcie ekranu logowania
       }
     } on FirebaseAuthException catch (e) {
       setState(() {
